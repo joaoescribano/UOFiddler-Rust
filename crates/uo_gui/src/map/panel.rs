@@ -2,8 +2,12 @@
 //! cursor, and the pending edits of each facet.
 
 use super::assets::{Blocks, MapAssets};
+use super::editor::text::{t, tf};
+use super::editor::{self, MapEditor, Pointer, Request};
+use super::ui::picker::Picker;
 use super::view::{Hover, IsoView};
 use eframe::egui::{self, pos2, vec2, Color32, Rect, Stroke};
+use uo_core::map_edit::{save, SaveOptions};
 use uo_core::{
     FileIndex, HuesManager, MapEdits, MapManager, RadarColManager, TileDataManager, MAP_DEFS,
 };

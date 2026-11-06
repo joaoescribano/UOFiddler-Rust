@@ -190,10 +190,7 @@ fn details(ui: &mut egui::Ui, assets: &MapAssets, brush: Brush) {
     match brush {
         Brush::Static(graphic, hue) => {
             ui.label(small(format!("0x{graphic:04X}")));
-            let color = assets
-                .hues
-                .and_then(|hues| picker::hue_color(hues, hue))
-                .filter(|_| hue > 0);
+            let color = picker::hue_color(assets.hues, hue).filter(|_| hue > 0);
             if let Some(color) = color {
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
                 ui.painter().rect_filled(rect, egui::Rounding::same(2.0), color);

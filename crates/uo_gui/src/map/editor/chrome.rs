@@ -944,7 +944,7 @@ fn help(ctx: &egui::Context, open: &mut bool) {
                 for (keys, what) in rows {
                     ui.label(
                         RichText::new(keys)
-                            .font(style::code())
+                            .font(egui::FontId::monospace(13.0))
                             .color(style::color::ACCENT),
                     );
                     ui.label(t(what));

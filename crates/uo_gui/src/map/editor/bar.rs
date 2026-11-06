@@ -550,14 +550,12 @@ fn option(
             widgets::label(ui, t("items.hue"));
             ui.add(egui::DragValue::new(&mut state.hue).range(0..=3000))
                 .on_hover_text(t("map.hue_hint"));
-            if let Some(hues) = assets.hues {
-                if picker::hue_button(ui, hues, state.hue).clicked() {
-                    picker.open_hue(
-                        PICK_HUE,
-                        state.hue,
-                        Some((picker::Kind::Static, state.graphic)),
-                    );
-                }
+            if picker::hue_button(ui, assets.hues, state.hue).clicked() {
+                picker.open_hue(
+                    PICK_HUE,
+                    state.hue,
+                    Some((picker::Kind::Static, state.graphic)),
+                );
             }
         }
         Item::Current => super::brush_card::bar_card(ui, state, assets, BUTTON),

@@ -10,6 +10,7 @@ pub mod heights;
 pub mod iso;
 pub mod panel;
 pub mod scene;
+pub mod ui;
 pub mod view;
 
 pub use panel::{MapPanel, MapRes};
