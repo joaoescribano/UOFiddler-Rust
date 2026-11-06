@@ -123,7 +123,10 @@ impl Tool {
 
     /// Paints with the brush (dragging); the others act by click.
     pub fn brushes(self) -> bool {
-        matches!(self, Tool::Stamp | Tool::Terrain | Tool::Height | Tool::Erase)
+        matches!(
+            self,
+            Tool::Stamp | Tool::Terrain | Tool::Height | Tool::Erase
+        )
     }
 }
 
@@ -240,13 +243,7 @@ fn surface_in(assets: &MapAssets, band: Band, fixed: Option<i8>, x: i32, y: i32)
 
 /// The corner heights of a tile's diamond as the editor draws it: the land's when it is inside
 /// the band; else a flat diamond at the height of the visible ground.
-fn tile_corners_in(
-    assets: &MapAssets,
-    band: Band,
-    fixed: Option<i8>,
-    x: i32,
-    y: i32,
-) -> [i8; 4] {
+fn tile_corners_in(assets: &MapAssets, band: Band, fixed: Option<i8>, x: i32, y: i32) -> [i8; 4] {
     match assets.land_z(x, y) {
         Some(z) if band.contains(z as i32) => corners(assets, x, y),
         _ => {
@@ -300,7 +297,11 @@ pub(super) fn read_tile(assets: &MapAssets, x: i32, y: i32) -> Option<TileNow> {
     Some(TileNow {
         x,
         y,
-        land: (land.graphic, assets.land_name(land.graphic).to_string(), land.z),
+        land: (
+            land.graphic,
+            assets.land_name(land.graphic).to_string(),
+            land.z,
+        ),
         statics,
     })
 }
@@ -492,6 +493,8 @@ pub struct MapEditor {
     pub(super) test_hold: bool,
     /// `.../move`: move the chosen region before the click.
     pub(super) test_move: bool,
+    /// `.../save`: saves once the test stroke is over (captures of the whole round trip).
+    pub test_save: bool,
     /// `.../drag2647,552;2655,552`: a stroke dragged through the given tiles, one per frame,
     /// released on the last (captures of a real stroke).
     pub(super) test_drag: std::collections::VecDeque<(i32, i32)>,
@@ -556,6 +559,7 @@ impl Default for MapEditor {
             test_click: false,
             test_hold: false,
             test_move: false,
+            test_save: false,
             test_drag: Default::default(),
             art: HashMap::new(),
             land_art: HashMap::new(),
@@ -679,6 +683,7 @@ impl MapEditor {
                     }
                 }
                 "novary" => self.vary = false,
+                "save" => self.test_save = true,
                 // Move the chosen region (`sel1,2,3,4`) to the cursor's tile.
                 "move" => self.test_move = true,
                 sel if sel.starts_with("sel") => {
@@ -801,8 +806,8 @@ impl MapEditor {
             )
         });
         if !self.typing && !ctx.wants_keyboard_input() {
-            let arrows = self.picked.is_none()
-                && !(self.tool == Tool::Region && self.region.is_some());
+            let arrows =
+                self.picked.is_none() && !(self.tool == Tool::Region && self.region.is_some());
             let keys = [
                 (egui::Key::W, egui::Key::ArrowUp, egui::vec2(0.0, -1.0)),
                 (egui::Key::S, egui::Key::ArrowDown, egui::vec2(0.0, 1.0)),
@@ -912,9 +917,7 @@ impl MapEditor {
             borders::Source::Set(name) => self.border_set(name).is_some(),
             _ => true,
         };
-        if self.test_click
-            && set_ready
-            && tile.is_some_and(|(x, y)| assets.land_z(x, y).is_some())
+        if self.test_click && set_ready && tile.is_some_and(|(x, y)| assets.land_z(x, y).is_some())
         {
             self.test_click = false;
             p.pressed = true;
@@ -998,11 +1001,8 @@ impl MapEditor {
                 if let Some(at) = tile.filter(|_| p.pressed) {
                     self.selected = Some(at);
                     // The top one among those the band leaves visible.
-                    self.picked = read_tile(assets, at.0, at.1).and_then(|t| {
-                        visible(&t, self.band)
-                            .next_back()
-                            .map(|s| (s.graphic, s.z))
-                    });
+                    self.picked = read_tile(assets, at.0, at.1)
+                        .and_then(|t| visible(&t, self.band).next_back().map(|s| (s.graphic, s.z)));
                 }
             }
             Tool::Region if self.pasting => {
@@ -1033,11 +1033,9 @@ impl MapEditor {
         // UOIddler.
         if self.tool == Tool::Height {
             let band = self.band;
-            stroke.tiles.retain(|&(x, y)| {
-                assets
-                    .land_z(x, y)
-                    .is_some_and(|z| band.contains(z as i32))
-            });
+            stroke
+                .tiles
+                .retain(|&(x, y)| assets.land_z(x, y).is_some_and(|z| band.contains(z as i32)));
         }
         match self.tool {
             Tool::Stamp if self.is_floor(assets, self.graphic) => {
@@ -1119,6 +1117,11 @@ impl MapEditor {
         }
         self.statics_browse.set_current(self.graphic as u32);
         self.lands_browse.set_current(self.land as u32);
+    }
+
+    /// The test stroke (`drag…`) is over and nothing is being painted.
+    pub fn test_idle(&self) -> bool {
+        self.test_drag.is_empty() && self.stroke.is_none() && !self.test_click
     }
 
     /// The tile pinned by `UOFIDDLER_EDITOR` (captures).
@@ -1210,7 +1213,11 @@ impl MapEditor {
     /// The land borders: the chosen (land) set, or the ones read from the art, with the most
     /// common land around the stroke or with black. A chosen floor set does not serve land:
     /// black it is.
-    fn land_transitions(&mut self, assets: &MapAssets, stroke: &[(i32, i32)]) -> terrain::Transitions {
+    fn land_transitions(
+        &mut self,
+        assets: &MapAssets,
+        stroke: &[(i32, i32)],
+    ) -> terrain::Transitions {
         let land = |x: i32, y: i32| assets.land(x, y).map(|l| l.0);
         let found = match self.border_source.clone() {
             borders::Source::Set(name) => match self.border_set(&name) {
@@ -1438,7 +1445,12 @@ impl MapEditor {
             .collect();
         let painting = self.stroke.as_ref().map(|s| s.tiles.as_slice());
         let tint = |r: f32, g: f32, b: f32| {
-            Color32::from_rgba_unmultiplied((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, 89)
+            Color32::from_rgba_unmultiplied(
+                (r * 255.0) as u8,
+                (g * 255.0) as u8,
+                (b * 255.0) as u8,
+                89,
+            )
         };
         overlay.fill_color = match self.tool {
             Tool::Erase => Some(tint(0.85, 0.36, 0.31)),
@@ -1577,12 +1589,7 @@ impl MapEditor {
     }
 
     /// Takes the statics out of a region (inside the band), in the change in progress.
-    fn clear_into(
-        &self,
-        assets: &MapAssets,
-        area: Area,
-        work: &mut BTreeMap<(i32, i32), MapTile>,
-    ) {
+    fn clear_into(&self, assets: &MapAssets, area: Area, work: &mut BTreeMap<(i32, i32), MapTile>) {
         for y in area.y0..=area.y1 {
             for x in area.x0..=area.x1 {
                 let Some(now) = read_tile(assets, x, y) else {

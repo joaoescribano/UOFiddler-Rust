@@ -1966,6 +1966,7 @@ mod tests {
             textures: None,
             tiledata: None,
             hues: Some(&hues),
+            cache: Default::default(),
         };
         let ctx = egui::Context::default();
         let mut picker = Picker::default();
@@ -2024,6 +2025,7 @@ mod tests {
             textures: None,
             tiledata: Some(&tiledata),
             hues: hues.as_ref(),
+            cache: Default::default(),
         };
         let statics = build(Kind::Static, &assets);
         assert!(statics.entries.len() > 1000, "{}", statics.entries.len());

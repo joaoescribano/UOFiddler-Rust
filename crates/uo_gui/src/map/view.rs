@@ -267,7 +267,7 @@ impl IsoView {
     }
 
     fn paint_grid(&self, painter: &egui::Painter, t: &Transform) {
-        let stroke = egui::Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 40));
+        let stroke = egui::Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 14));
         for item in &self.scene.items {
             if let Some(d) = item.diamond() {
                 let d = d.map(|p| t.to_screen(p));

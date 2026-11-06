@@ -143,7 +143,10 @@ pub(super) fn bar_card(ui: &mut egui::Ui, state: &mut MapEditor, assets: &MapAss
     let inner = (height - 4.0).max(12.0);
     let frame = egui::Frame::none()
         .fill(style::color::SURFACE_2)
-        .stroke(Stroke::new(1.0_f32, style::color::ACCENT.gamma_multiply(0.6)))
+        .stroke(Stroke::new(
+            1.0_f32,
+            style::color::ACCENT.gamma_multiply(0.6),
+        ))
         .rounding(egui::Rounding::same(4.0))
         .inner_margin(Margin::symmetric(4.0, 1.0))
         .show(ui, |ui| {
@@ -163,10 +166,9 @@ pub(super) fn bar_card(ui: &mut egui::Ui, state: &mut MapEditor, assets: &MapAss
             });
         });
     let tip = match brush {
-        Brush::Static(graphic, hue) => format!(
-            "{name}  0x{graphic:04X}  {}",
-            tf("map.brush_hue", &[&hue])
-        ),
+        Brush::Static(graphic, hue) => {
+            format!("{name}  0x{graphic:04X}  {}", tf("map.brush_hue", &[&hue]))
+        }
         Brush::Land(graphic) => format!("{name}  0x{graphic:04X}"),
         Brush::None => String::new(),
     };
@@ -193,7 +195,8 @@ fn details(ui: &mut egui::Ui, assets: &MapAssets, brush: Brush) {
             let color = picker::hue_color(assets.hues, hue).filter(|_| hue > 0);
             if let Some(color) = color {
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
-                ui.painter().rect_filled(rect, egui::Rounding::same(2.0), color);
+                ui.painter()
+                    .rect_filled(rect, egui::Rounding::same(2.0), color);
             }
         }
         Brush::Land(graphic) => {

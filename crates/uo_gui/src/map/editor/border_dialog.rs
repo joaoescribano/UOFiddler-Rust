@@ -391,12 +391,7 @@ pub(super) fn window(
     state.border_dialog.open &= open;
 }
 
-fn body(
-    ui: &mut egui::Ui,
-    state: &mut MapEditor,
-    picker: &mut picker::Picker,
-    assets: &MapAssets,
-) {
+fn body(ui: &mut egui::Ui, state: &mut MapEditor, picker: &mut picker::Picker, assets: &MapAssets) {
     let ctx = ui.ctx().clone();
     // The set, the name, the kind, save and delete.
     ui.horizontal_wrapped(|ui| {
@@ -446,16 +441,20 @@ fn body(
             ],
             420.0,
         );
-        if widgets::action(ui, icon::FLOPPY_DISK, t("items.save"), widgets::Kind::Primary)
-            .clicked()
+        if widgets::action(
+            ui,
+            icon::FLOPPY_DISK,
+            t("items.save"),
+            widgets::Kind::Primary,
+        )
+        .clicked()
         {
             if let Some((set, old)) = state.border_dialog.save() {
                 state.border_saved(set, old);
             }
         }
         if let Some(name) = state.border_dialog.saved_as.clone() {
-            if widgets::action(ui, icon::TRASH, t("items.delete"), widgets::Kind::Danger)
-                .clicked()
+            if widgets::action(ui, icon::TRASH, t("items.delete"), widgets::Kind::Danger).clicked()
             {
                 state.border_deleted(&name);
             }
@@ -546,7 +545,11 @@ fn body(
         .auto_shrink([false, false])
         .show(ui, |ui| {
             for (key, masks) in GROUPS {
-                ui.label(RichText::new(group_label(key)).font(style::heading()).strong());
+                ui.label(
+                    RichText::new(group_label(key))
+                        .font(style::heading())
+                        .strong(),
+                );
                 ui.horizontal_wrapped(|ui| {
                     for &mask in masks {
                         slot(ui, state, picker, assets, mask);
@@ -576,7 +579,10 @@ mod tests {
         assert!(dialog.message.as_ref().is_some_and(|(_, e)| *e));
         dialog.remove(TOP, 0x024A);
         dialog.remove(TOP, 0x0262);
-        assert!(!dialog.editing.masks.contains_key(&TOP), "an empty shape goes");
+        assert!(
+            !dialog.editing.masks.contains_key(&TOP),
+            "an empty shape goes"
+        );
     }
 
     #[test]

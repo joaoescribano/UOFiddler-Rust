@@ -225,14 +225,6 @@ fn status(ui: &mut egui::Ui, state: &MapEditor, assets: &MapAssets) {
         };
         ui.label(RichText::new(cursor).font(style::body()));
         ui.add_space(16.0);
-        if let Some((text, error)) = &state.message {
-            let tint = if *error {
-                style::color::DANGER
-            } else {
-                style::color::ACCENT
-            };
-            ui.label(RichText::new(text).color(tint));
-        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let band = if state.band.is_full() {
                 String::new()
@@ -242,6 +234,19 @@ fn status(ui: &mut egui::Ui, state: &MapEditor, assets: &MapAssets) {
             ui.label(
                 RichText::new(format!("{}{band}", state.tool.hint())).color(style::color::TEXT_DIM),
             );
+            ui.add_space(16.0);
+            // The message takes what is left, cut with an ellipsis (the whole text on hover).
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                if let Some((text, error)) = &state.message {
+                    let tint = if *error {
+                        style::color::DANGER
+                    } else {
+                        style::color::ACCENT
+                    };
+                    ui.add(egui::Label::new(RichText::new(text).color(tint)).truncate())
+                        .on_hover_text(text);
+                }
+            });
         });
     });
 }
@@ -492,7 +497,11 @@ fn region_inspector(
     assets: &MapAssets,
     actions: &mut Changes,
 ) {
-    ui.label(RichText::new(t("map.region")).font(style::heading()).strong());
+    ui.label(
+        RichText::new(t("map.region"))
+            .font(style::heading())
+            .strong(),
+    );
     ui.label(
         RichText::new(t("map.region_inspector_hint"))
             .font(style::small())
@@ -585,8 +594,7 @@ fn region_inspector(
         });
         widgets::toggle_chip(ui, &mut state.empty_only, t("map.empty_only"));
         ui.add_space(4.0);
-        if widgets::action(ui, icon::PAINT_BUCKET, t("map.fill"), widgets::Kind::Normal).clicked()
-        {
+        if widgets::action(ui, icon::PAINT_BUCKET, t("map.fill"), widgets::Kind::Normal).clicked() {
             actions.extend(state.fill_region(assets));
         }
     });
@@ -617,12 +625,9 @@ fn clipboard_line(ui: &mut egui::Ui, state: &MapEditor) {
     if let Some(clip) = &state.clip {
         ui.add_space(8.0);
         ui.label(
-            RichText::new(tf(
-                "map.clipboard",
-                &[&clip.w, &clip.h, &clip.pieces.len()],
-            ))
-            .font(style::small())
-            .color(style::color::TEXT_DIM),
+            RichText::new(tf("map.clipboard", &[&clip.w, &clip.h, &clip.pieces.len()]))
+                .font(style::small())
+                .color(style::color::TEXT_DIM),
         );
     }
 }
@@ -784,7 +789,12 @@ fn band_slider(ui: &mut egui::Ui, band: &mut Band) {
             } else {
                 style::color::SURFACE
             };
-            painter.circle(center, 7.0, inside, Stroke::new(2.0_f32, style::color::ACCENT));
+            painter.circle(
+                center,
+                7.0,
+                inside,
+                Stroke::new(2.0_f32, style::color::ACCENT),
+            );
         }
         response.on_hover_text(t("map.band_hint"));
         ui.label(RichText::new(band.from.to_string()).font(style::small()));

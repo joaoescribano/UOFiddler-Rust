@@ -12,8 +12,8 @@
 
 use super::brush::{Shape, SIZES};
 use super::chrome::Request;
-use super::state::{parse_xy, Changes, MapEditor, PaletteMode, Tool};
 use super::height::Mode;
+use super::state::{parse_xy, Changes, MapEditor, PaletteMode, Tool};
 use super::text::{t, tf};
 use crate::map::assets::MapAssets;
 use crate::map::ui::{picker, style, widgets};
@@ -255,39 +255,42 @@ pub(super) fn bar(
 /// menu next to them.
 fn save_buttons(ui: &mut egui::Ui, state: &mut MapEditor, requests: &mut Vec<Request>) {
     let pending = state.tiles.len();
-    ui.menu_button(RichText::new(icon::DOTS_THREE_VERTICAL).font(style::icon()), |ui| {
-        if ui
-            .button(format!("{}  {}", icon::EXPORT, t("map.export")))
-            .on_hover_text(t("map.export_hint"))
-            .clicked()
-        {
-            requests.push(Request::Export);
-            ui.close_menu();
-        }
-        if ui
-            .button(format!("{}  {}", icon::DOWNLOAD_SIMPLE, t("map.import")))
-            .on_hover_text(t("map.import_hint"))
-            .clicked()
-        {
-            requests.push(Request::Import);
-            ui.close_menu();
-        }
-        ui.separator();
-        if ui
-            .add_enabled(
-                pending > 0,
-                egui::Button::new(
-                    RichText::new(format!("{}  {}", icon::TRASH, t("map.discard")))
-                        .color(style::color::DANGER),
-                ),
-            )
-            .on_hover_text(t("map.discard_hint"))
-            .clicked()
-        {
-            requests.push(Request::Discard);
-            ui.close_menu();
-        }
-    });
+    ui.menu_button(
+        RichText::new(icon::DOTS_THREE_VERTICAL).font(style::icon()),
+        |ui| {
+            if ui
+                .button(format!("{}  {}", icon::EXPORT, t("map.export")))
+                .on_hover_text(t("map.export_hint"))
+                .clicked()
+            {
+                requests.push(Request::Export);
+                ui.close_menu();
+            }
+            if ui
+                .button(format!("{}  {}", icon::DOWNLOAD_SIMPLE, t("map.import")))
+                .on_hover_text(t("map.import_hint"))
+                .clicked()
+            {
+                requests.push(Request::Import);
+                ui.close_menu();
+            }
+            ui.separator();
+            if ui
+                .add_enabled(
+                    pending > 0,
+                    egui::Button::new(
+                        RichText::new(format!("{}  {}", icon::TRASH, t("map.discard")))
+                            .color(style::color::DANGER),
+                    ),
+                )
+                .on_hover_text(t("map.discard_hint"))
+                .clicked()
+            {
+                requests.push(Request::Discard);
+                ui.close_menu();
+            }
+        },
+    );
     if ui
         .add_enabled(
             pending > 0,

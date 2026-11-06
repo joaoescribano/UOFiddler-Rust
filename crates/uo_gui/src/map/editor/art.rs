@@ -31,7 +31,12 @@ impl MapEditor {
     }
 
     /// The art of a land tile, as an egui texture.
-    pub(super) fn land_art(&mut self, ctx: &egui::Context, assets: &MapAssets, graphic: u16) -> Art {
+    pub(super) fn land_art(
+        &mut self,
+        ctx: &egui::Context,
+        assets: &MapAssets,
+        graphic: u16,
+    ) -> Art {
         if let Some(known) = self.land_art.get(&graphic) {
             return known.clone();
         }

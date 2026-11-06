@@ -29,8 +29,9 @@ pub fn paint(
         painter.line_segment([a, b], Stroke::new(width, color));
     };
     // The grid: the two top sides of each visible tile with its ground inside the band.
-    if let Some((from, to)) = overlay.grid {
-        let color = rgba(1.0, 1.0, 1.0, 0.16);
+    // Faint, and gone when zoomed far out (it would only be noise there).
+    if let Some((from, to)) = overlay.grid.filter(|_| t.zoom >= 0.6) {
+        let color = rgba(1.0, 1.0, 1.0, 0.035);
         let clip = t.rect.expand(50.0);
         for item in view.scene_items() {
             if !item.is_land() || !(from..=to).contains(&item.z) {
@@ -72,7 +73,12 @@ pub fn paint(
     if let Some((tile, z)) = overlay.selected {
         let points = t.diamond(tile.0, tile.1, z.map(i32::from));
         for i in 0..4 {
-            line(points[i], points[(i + 1) % 4], 3.0, rgba(0.42, 0.72, 1.0, 0.95));
+            line(
+                points[i],
+                points[(i + 1) % 4],
+                3.0,
+                rgba(0.42, 0.72, 1.0, 0.95),
+            );
         }
     }
     // A tile rectangle, on the visible ground of each corner (the editor gives the heights,

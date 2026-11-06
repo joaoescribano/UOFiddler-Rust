@@ -681,6 +681,7 @@ mod tests {
                 textures: None,
                 tiledata: Some(&self.tiledata),
                 hues: None,
+                cache: Default::default(),
             }
         }
     }

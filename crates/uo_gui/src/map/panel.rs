@@ -121,76 +121,58 @@ impl MapPanel {
         if let Some(radar) = res.radar {
             self.radar_inset(ui, rect, res.maps, radar, map_id, x, y);
         }
-        self.edit_button(ui, rect, map_id);
+        if ui.input(|i| i.key_pressed(egui::Key::F11)) && !ui.ctx().wants_keyboard_input() {
+            self.open_editor(map_id);
+        }
 
         let status = Rect::from_min_max(pos2(full.min.x, rect.max.y), full.max);
         ui.allocate_rect(status, egui::Sense::hover());
-        ui.painter().text(
-            pos2(status.min.x + 6.0, status.center().y),
+        let (left, right) = text;
+        let painter = ui.painter();
+        painter.text(
+            pos2(status.min.x + 8.0, status.center().y),
             egui::Align2::LEFT_CENTER,
-            text,
-            egui::FontId::monospace(12.0),
-            ui.visuals().text_color(),
+            left,
+            super::ui::style::body(),
+            super::ui::style::color::TEXT,
+        );
+        painter.text(
+            pos2(status.max.x - 8.0, status.center().y),
+            egui::Align2::RIGHT_CENTER,
+            right,
+            super::ui::style::small(),
+            super::ui::style::color::TEXT_DIM,
         );
     }
 
-    /// The "Edit" button over the view's top-left corner, with the facet's pending changes.
-    fn edit_button(&mut self, ui: &mut egui::Ui, view: Rect, map_id: usize) {
-        let pending = self.edits[map_id].len();
-        let mut open = false;
-        egui::Area::new(ui.id().with("map-edit-button"))
-            .fixed_pos(view.min + vec2(8.0, 8.0))
-            .order(egui::Order::Middle)
-            .show(ui.ctx(), |ui| {
-                ui.horizontal(|ui| {
-                    let label = format!("{}  {}", egui_phosphor::regular::PENCIL_SIMPLE, t("map.edit"));
-                    if ui
-                        .add(egui::Button::new(egui::RichText::new(label).strong()).min_size(vec2(0.0, 28.0)))
-                        .on_hover_text(t("map.edit_hint"))
-                        .clicked()
-                    {
-                        open = true;
-                    }
-                    if pending > 0 {
-                        ui.label(
-                            egui::RichText::new(tf("map.pending", &[&pending]))
-                                .color(Color32::from_rgb(0xd8, 0xa8, 0x4e)),
-                        );
-                    }
-                });
-            });
-        if open || ui.input(|i| i.key_pressed(egui::Key::F11)) {
-            self.open_editor(map_id);
-        }
-    }
-
-    fn status_text(&self, assets: &MapAssets) -> String {
+    /// The status bar: the tile under the cursor on the left, the view on the right.
+    fn status_text(&self, assets: &MapAssets) -> (String, String) {
         let (cx, cy) = self.view.center_tile();
-        let mut s = format!(
-            "center {}, {}   zoom {:.2}   statics {}   sprites {}",
+        let right = format!(
+            "{}  ·  centre {}, {}  ·  zoom {:.0}%  ·  {} statics",
+            MAP_DEFS[assets.map_id].name,
             cx,
             cy,
-            self.view.zoom,
+            self.view.zoom * 100.0,
             self.view.statics_drawn(),
-            self.view.sprites_cached()
         );
+        let mut left = String::new();
         if let Some(h) = self.hover {
-            let mut b = Blocks::new(assets);
-            if let Some((g, z)) = b.land(h.x, h.y) {
-                s += &format!(
-                    "   |   {}, {}, {}  land 0x{:04X} {}",
+            if let Some((g, z)) = assets.land(h.x, h.y) {
+                left = format!(
+                    "{}, {}, {}  ·  {} (0x{:04X})",
                     h.x,
                     h.y,
                     z,
-                    g,
-                    assets.land_name(g)
+                    assets.land_name(g),
+                    g
                 );
             }
             if let Some((_, _, g, z, _)) = h.static_hit {
-                s += &format!("   static 0x{:04X} {} z {}", g, assets.item_name(g), z);
+                left += &format!("  ·  {} (0x{:04X}) z {}", assets.item_name(g), g, z);
             }
         }
-        s
+        (left, right)
     }
 
     /// The radar around the camera in a corner: click or drag on it to move.
@@ -387,7 +369,14 @@ impl MapPanel {
                     actions.extend(self.editor.pointer(&assets, pointer));
                     if let Some(overlay) = self.editor.overlay().cloned() {
                         let painter = ui.painter_at(rect);
-                        editor::overlay::paint(ctx, &painter, &t, &overlay, &mut self.view, &assets);
+                        editor::overlay::paint(
+                            ctx,
+                            &painter,
+                            &t,
+                            &overlay,
+                            &mut self.view,
+                            &assets,
+                        );
                     }
                 });
         }
@@ -397,11 +386,18 @@ impl MapPanel {
             }
             self.view.generation += 1;
         }
+        if self.editor.test_save && self.editor.test_idle() && !self.edits[map_id].is_empty() {
+            self.editor.test_save = false;
+            requests.push(Request::Save);
+        }
         for request in requests {
             self.request(request, res.maps, map_id);
         }
         let (cx, cy) = self.view.center_tile();
-        let (w, h) = (res.maps.actual_widths[map_id] as i32, MAP_DEFS[map_id].height as i32);
+        let (w, h) = (
+            res.maps.actual_widths[map_id] as i32,
+            MAP_DEFS[map_id].height as i32,
+        );
         *x = cx.clamp(0, w - 1) as u32;
         *y = cy.clamp(0, h - 1) as u32;
         self.synced = Some((map_id, *x, *y));
@@ -417,7 +413,10 @@ impl MapPanel {
                     return;
                 }
                 let target_dir = if request == Request::SaveAs {
-                    match rfd::FileDialog::new().set_title(t("map.save_as")).pick_folder() {
+                    match rfd::FileDialog::new()
+                        .set_title(t("map.save_as"))
+                        .pick_folder()
+                    {
                         Some(dir) => Some(dir),
                         None => return,
                     }
@@ -486,8 +485,7 @@ impl MapPanel {
                             }
                             self.editor.reset(&self.edits[map_id]);
                             self.view.generation += 1;
-                            self.editor
-                                .say(tf("map.imported", &[&edits.len()]), false);
+                            self.editor.say(tf("map.imported", &[&edits.len()]), false);
                         }
                         Err(e) => self.editor.say(e, true),
                     }
