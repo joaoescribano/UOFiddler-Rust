@@ -9,6 +9,7 @@ use eframe::egui;
 use uo_core::*;
 
 mod files_tab;
+mod map;
 mod packets_tab;
 mod paperdoll_tab;
 
@@ -644,10 +645,8 @@ pub struct UoFiddlerApp {
     map_last_render_size: egui::Vec2,
     map_mode: MapMode,
     map_use_diff: bool,
-    live_zoom: f32,
     map_max_z: i32,
-    live_pan: (f32, f32),
-    live_renderer: LiveRenderer,
+    map_panel: map::MapPanel,
     overview_tex: Option<(usize, bool, egui::TextureHandle, u32, u32)>,
     overview_multimap: bool,
 
@@ -826,10 +825,8 @@ impl Default for UoFiddlerApp {
             map_last_render_size: egui::Vec2::ZERO,
             map_mode: MapMode::Radar,
             map_use_diff: true,
-            live_zoom: 1.0,
             map_max_z: 127,
-            live_pan: (0.0, 0.0),
-            live_renderer: LiveRenderer::default(),
+            map_panel: map::MapPanel::default(),
             overview_tex: None,
             overview_multimap: false,
             gamedata_archive,
@@ -859,6 +856,19 @@ impl Default for UoFiddlerApp {
                 app.map_y = n;
             }
             app.map_use_diff = !p.contains(&"nodiff");
+            // Isometric view options: zoom=<f>, maxz=<z>, noroofs, grid
+            for opt in &p[1..] {
+                if let Some(z) = opt.strip_prefix("zoom=").and_then(|z| z.parse().ok()) {
+                    app.map_panel.view.zoom = z;
+                } else if let Some(z) = opt.strip_prefix("maxz=").and_then(|z| z.parse().ok()) {
+                    app.map_max_z = z;
+                    app.map_panel.view.cut.cut = Some(z);
+                } else if *opt == "noroofs" {
+                    app.map_panel.view.cut.hide_roofs = true;
+                } else if *opt == "grid" {
+                    app.map_panel.view.show_grid = true;
+                }
+            }
         }
         app
     }
@@ -1809,26 +1819,7 @@ impl UoFiddlerApp {
                     }
                 }
             }
-            MapMode::Live => {
-                let Some(art) = &self.art_index else { return };
-                let lw = ((width_px / self.live_zoom) as i32).clamp(64, 2600);
-                let lh = ((height_px / self.live_zoom) as i32).clamp(64, 1800);
-                let c = LiveContext {
-                    map: &self.map_mgr,
-                    art,
-                    textures: self.texture_index.as_ref(),
-                    tiledata: self.tiledata.as_ref(),
-                };
-                let opt = LiveOptions {
-                    show_statics: self.map_show_statics,
-                    use_diff: self.map_use_diff,
-                    max_z: self.map_max_z,
-                    textured_slopes: true,
-                };
-                let buf = self.live_renderer.render(&c, self.map_id, self.map_x as i32, self.map_y as i32, lw, lh, opt);
-                let img = egui::ColorImage::from_rgba_unmultiplied([lw as usize, lh as usize], &buf);
-                self.map_texture = Some(ctx.load_texture("map_live", img, egui::TextureOptions::NEAREST));
-            }
+            MapMode::Live => {}
             MapMode::Overview => {}
         }
     }
@@ -2194,6 +2185,7 @@ impl UoFiddlerApp {
 
 impl eframe::App for UoFiddlerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        map::capture::tick(ctx);
         // ------------------ 1. SPLASH SCREEN ------------------
         if self.splash_active {
             let elapsed = self.splash_start.elapsed().as_secs_f32();
@@ -5080,7 +5072,7 @@ impl UoFiddlerApp {
             ui.label("🖥 Modo:");
             for (m, name) in [
                 (MapMode::Radar, "📡 Radar"),
-                (MapMode::Live, "🎮 Live (isométrico)"),
+                (MapMode::Live, "🎮 Isometric"),
                 (MapMode::Overview, "🗺 Visão geral (facet)"),
             ] {
                 if ui.selectable_label(self.map_mode == m, name).clicked() {
@@ -5113,17 +5105,17 @@ impl UoFiddlerApp {
             if self.map_mode == MapMode::Live {
                 ui.separator();
                 ui.label("Zoom:");
-                if ui.add(egui::Slider::new(&mut self.live_zoom, 0.5..=2.0)).changed() {
-                    map_changed = true;
-                }
-                ui.label("Z máx:");
+                ui.add(egui::Slider::new(&mut self.map_panel.view.zoom, map::view::MIN_ZOOM..=map::view::MAX_ZOOM));
+                ui.label("Max Z:");
                 if ui
-                    .add(egui::Slider::new(&mut self.map_max_z, -10..=127))
-                    .on_hover_text("Esconde statics acima desta altura (tire telhados)")
+                    .add(egui::Slider::new(&mut self.map_max_z, -128..=127))
+                    .on_hover_text("Hide everything above this height (peel off roofs and upper floors)")
                     .changed()
                 {
-                    map_changed = true;
+                    self.map_panel.view.cut.cut = (self.map_max_z < 127).then_some(self.map_max_z);
                 }
+                ui.checkbox(&mut self.map_panel.view.cut.hide_roofs, "Hide roofs");
+                ui.checkbox(&mut self.map_panel.view.show_grid, "Grid");
             }
         });
 
@@ -5193,6 +5185,19 @@ impl UoFiddlerApp {
             self.show_map_overview(ui, ctx);
             return;
         }
+        if self.map_mode == MapMode::Live {
+            self.map_panel.view.show_statics = self.map_show_statics;
+            let mut res = map::MapRes {
+                maps: &mut self.map_mgr,
+                art: self.art_index.as_ref(),
+                textures: self.texture_index.as_ref(),
+                tiledata: self.tiledata.as_ref(),
+                hues: self.hues.as_ref(),
+                radar: self.radar_col.as_ref(),
+            };
+            self.map_panel.show(ui, &mut res, self.map_id, &mut self.map_x, &mut self.map_y);
+            return;
+        }
 
         // Canvas that fills 100% of the entire area
         egui::Frame::canvas(ui.style()).show(ui, |ui| {
@@ -5207,22 +5212,9 @@ impl UoFiddlerApp {
                     self.map_mgr.actual_widths[self.map_id].saturating_sub(1) as f32,
                     (MAP_DEFS[self.map_id].height - 1) as f32,
                 );
-                if self.map_mode == MapMode::Live {
-                    // screen = ((u - v) * 22, (u + v) * 22)
-                    let (dx, dy) = (delta.x / self.live_zoom / 22.0, delta.y / self.live_zoom / 22.0);
-                    let (du, dv) = ((dx + dy) / 2.0, (dy - dx) / 2.0);
-                    self.live_pan.0 += du;
-                    self.live_pan.1 += dv;
-                    let (iu, iv) = (self.live_pan.0.trunc(), self.live_pan.1.trunc());
-                    self.live_pan.0 -= iu;
-                    self.live_pan.1 -= iv;
-                    self.map_x = (self.map_x as f32 - iu).clamp(0.0, max_x) as u32;
-                    self.map_y = (self.map_y as f32 - iv).clamp(0.0, max_y) as u32;
-                } else {
-                    let pan_scale = (1.0 / self.map_zoom).max(0.25);
-                    self.map_x = (self.map_x as f32 - (delta.x * pan_scale)).clamp(0.0, max_x) as u32;
-                    self.map_y = (self.map_y as f32 - (delta.y * pan_scale)).clamp(0.0, max_y) as u32;
-                }
+                let pan_scale = (1.0 / self.map_zoom).max(0.25);
+                self.map_x = (self.map_x as f32 - (delta.x * pan_scale)).clamp(0.0, max_x) as u32;
+                self.map_y = (self.map_y as f32 - (delta.y * pan_scale)).clamp(0.0, max_y) as u32;
                 map_changed = true;
             }
 
@@ -5230,18 +5222,10 @@ impl UoFiddlerApp {
                 let scroll_y = ui.input(|i| i.raw_scroll_delta.y);
                 if scroll_y != 0.0 {
                     let factor = if scroll_y > 0.0 { 1.15 } else { 0.85 };
-                    if self.map_mode == MapMode::Live {
-                        let z = (self.live_zoom * factor).clamp(0.5, 2.0);
-                        if (z - self.live_zoom).abs() > 0.01 {
-                            self.live_zoom = z;
-                            map_changed = true;
-                        }
-                    } else {
-                        let new_zoom = (self.map_zoom * factor).clamp(0.5, 4.0);
-                        if (new_zoom - self.map_zoom).abs() > 0.01 {
-                            self.map_zoom = new_zoom;
-                            map_changed = true;
-                        }
+                    let new_zoom = (self.map_zoom * factor).clamp(0.5, 4.0);
+                    if (new_zoom - self.map_zoom).abs() > 0.01 {
+                        self.map_zoom = new_zoom;
+                        map_changed = true;
                     }
                 }
             }

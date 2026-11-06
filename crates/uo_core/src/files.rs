@@ -36,6 +36,10 @@ impl FileManager {
         };
 
         fm.load_settings();
+        // UOFIDDLER_UO_DIR=<folder> points at a client folder for this run only (tests, captures).
+        if let Some(dir) = std::env::var_os("UOFIDDLER_UO_DIR") {
+            fm.uo_dir = Some(PathBuf::from(dir));
+        }
 
         if fm.uo_dir.is_none() {
             fm.uo_dir = Self::auto_detect_uo_dir();

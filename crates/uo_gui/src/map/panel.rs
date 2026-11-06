@@ -1,0 +1,260 @@
+//! The map tab's isometric mode: the view, a radar inset to move around, the tile under the
+//! cursor, and the pending edits of each facet.
+
+use super::assets::{Blocks, MapAssets};
+use super::view::{Hover, IsoView};
+use eframe::egui::{self, pos2, vec2, Color32, Rect, Stroke};
+use uo_core::{
+    FileIndex, HuesManager, MapEdits, MapManager, RadarColManager, TileDataManager, MAP_DEFS,
+};
+
+/// The client data the map needs, borrowed from the app for one frame.
+pub struct MapRes<'a> {
+    pub maps: &'a mut MapManager,
+    pub art: Option<&'a FileIndex>,
+    pub textures: Option<&'a FileIndex>,
+    pub tiledata: Option<&'a TileDataManager>,
+    pub hues: Option<&'a HuesManager>,
+    pub radar: Option<&'a RadarColManager>,
+}
+
+const RADAR_TILES: u32 = 256;
+const RADAR_PX: f32 = 200.0;
+
+pub struct MapPanel {
+    pub view: IsoView,
+    /// Pending edits, one set per facet.
+    pub edits: [MapEdits; 6],
+    /// The (facet, x, y) the view was last put over, to follow the app's coordinates.
+    synced: Option<(usize, u32, u32)>,
+    radar: Option<(egui::TextureHandle, usize, u32, u32, u64)>,
+    hover: Option<Hover>,
+}
+
+impl Default for MapPanel {
+    fn default() -> Self {
+        Self {
+            view: IsoView::default(),
+            edits: Default::default(),
+            synced: None,
+            radar: None,
+            hover: None,
+        }
+    }
+}
+
+impl MapPanel {
+    /// Draws the isometric view filling `ui`, following and updating `(x, y)`.
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        res: &mut MapRes,
+        map_id: usize,
+        x: &mut u32,
+        y: &mut u32,
+    ) {
+        let assets = MapAssets {
+            maps: res.maps,
+            map_id,
+            edits: &self.edits[map_id],
+            art: res.art,
+            textures: res.textures,
+            tiledata: res.tiledata,
+            hues: res.hues,
+        };
+        if !res.maps.has_map(map_id) {
+            ui.label(
+                "This facet has no map file (mapN.mul or mapNLegacyMUL.uop) in the client folder.",
+            );
+            return;
+        }
+        if self.synced != Some((map_id, *x, *y)) {
+            let z = Blocks::new(&assets).land_z(*x as i32, *y as i32) as i32;
+            self.view.center_on(*x as i32, *y as i32, z);
+            self.synced = Some((map_id, *x, *y));
+        }
+
+        let status_h = 22.0;
+        let full = ui.available_rect_before_wrap();
+        let rect = Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - status_h));
+        let (_response, t, hover) = self.view.show(ui, rect, &assets);
+        self.hover = hover;
+
+        // Follow the camera back into the app's coordinates.
+        let (cx, cy) = self.view.center_tile();
+        let (w, h) = assets.size();
+        let (cx, cy) = (cx.clamp(0, w - 1) as u32, cy.clamp(0, h - 1) as u32);
+        if (cx, cy) != (*x, *y) {
+            *x = cx;
+            *y = cy;
+            self.synced = Some((map_id, cx, cy));
+        }
+
+        if let Some(hv) = hover {
+            let stroke = Stroke::new(1.5_f32, Color32::from_rgb(255, 220, 90));
+            let mut b = Blocks::new(&assets);
+            let z = [
+                b.land_z(hv.x, hv.y) as i32,
+                b.land_z(hv.x + 1, hv.y) as i32,
+                b.land_z(hv.x + 1, hv.y + 1) as i32,
+                b.land_z(hv.x, hv.y + 1) as i32,
+            ];
+            ui.painter_at(rect).add(egui::Shape::closed_line(
+                t.diamond(hv.x, hv.y, z).to_vec(),
+                stroke,
+            ));
+        }
+
+        let text = self.status_text(&assets);
+        if let Some(radar) = res.radar {
+            self.radar_inset(ui, rect, res.maps, radar, map_id, x, y);
+        }
+
+        let status = Rect::from_min_max(pos2(full.min.x, rect.max.y), full.max);
+        ui.allocate_rect(status, egui::Sense::hover());
+        ui.painter().text(
+            pos2(status.min.x + 6.0, status.center().y),
+            egui::Align2::LEFT_CENTER,
+            text,
+            egui::FontId::monospace(12.0),
+            ui.visuals().text_color(),
+        );
+    }
+
+    fn status_text(&self, assets: &MapAssets) -> String {
+        let (cx, cy) = self.view.center_tile();
+        let mut s = format!(
+            "center {}, {}   zoom {:.2}   statics {}   sprites {}",
+            cx,
+            cy,
+            self.view.zoom,
+            self.view.statics_drawn(),
+            self.view.sprites_cached()
+        );
+        if let Some(h) = self.hover {
+            let mut b = Blocks::new(assets);
+            if let Some((g, z)) = b.land(h.x, h.y) {
+                s += &format!(
+                    "   |   {}, {}, {}  land 0x{:04X} {}",
+                    h.x,
+                    h.y,
+                    z,
+                    g,
+                    assets.land_name(g)
+                );
+            }
+            if let Some((_, _, g, z, _)) = h.static_hit {
+                s += &format!("   static 0x{:04X} {} z {}", g, assets.item_name(g), z);
+            }
+        }
+        s
+    }
+
+    /// The radar around the camera in a corner: click or drag on it to move.
+    #[allow(clippy::too_many_arguments)]
+    fn radar_inset(
+        &mut self,
+        ui: &mut egui::Ui,
+        view: Rect,
+        maps: &MapManager,
+        radar: &RadarColManager,
+        map_id: usize,
+        x: &mut u32,
+        y: &mut u32,
+    ) {
+        let half = RADAR_TILES / 2;
+        let (w, h) = (maps.actual_widths[map_id], MAP_DEFS[map_id].height);
+        // Re-render when the camera gets a quarter of the radar away from where it was rendered.
+        let stale = self
+            .radar
+            .as_ref()
+            .is_none_or(|(_, id, rx, ry, generation)| {
+                *id != map_id
+                    || x.abs_diff(*rx) > RADAR_TILES / 4
+                    || y.abs_diff(*ry) > RADAR_TILES / 4
+                    || *generation != self.view.generation
+            });
+        if stale {
+            let bx = x.saturating_sub(half) / 8;
+            let by = y.saturating_sub(half) / 8;
+            if let Some((iw, ih, rgba)) = maps.render_minimap(
+                map_id,
+                bx,
+                by,
+                RADAR_TILES / 8,
+                RADAR_TILES / 8,
+                radar,
+                true,
+                false,
+            ) {
+                let img =
+                    egui::ColorImage::from_rgba_unmultiplied([iw as usize, ih as usize], &rgba);
+                let tex =
+                    ui.ctx()
+                        .load_texture("map_radar_inset", img, egui::TextureOptions::NEAREST);
+                self.radar = Some((tex, map_id, *x, *y, self.view.generation));
+            }
+        }
+        let Some((tex, _, rx, ry, _)) = &self.radar else {
+            return;
+        };
+        let origin = (
+            (rx.saturating_sub(half) / 8) * 8,
+            (ry.saturating_sub(half) / 8) * 8,
+        );
+        let rect = Rect::from_min_size(
+            pos2(view.max.x - RADAR_PX - 8.0, view.min.y + 8.0),
+            vec2(RADAR_PX, RADAR_PX),
+        );
+        let scale = RADAR_PX / RADAR_TILES as f32;
+        let response = ui.interact(
+            rect,
+            ui.id().with("radar_inset"),
+            egui::Sense::click_and_drag(),
+        );
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 2.0, Color32::BLACK);
+        painter.image(
+            tex.id(),
+            rect,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+        // The camera, and roughly what the view shows (a diamond in tile space).
+        let to_radar = |tx: f32, ty: f32| {
+            pos2(
+                rect.min.x + (tx - origin.0 as f32) * scale,
+                rect.min.y + (ty - origin.1 as f32) * scale,
+            )
+        };
+        let t = super::view::Transform {
+            rect: view,
+            camera: self.view.camera,
+            zoom: self.view.zoom,
+        };
+        let corners = [
+            view.left_top(),
+            view.right_top(),
+            view.right_bottom(),
+            view.left_bottom(),
+        ]
+        .map(|p| {
+            let wp = t.to_world(p);
+            let (tx, ty) = ((wp.x + wp.y) / 44.0, (wp.y - wp.x) / 44.0);
+            to_radar(tx, ty)
+        });
+        painter.add(egui::Shape::closed_line(
+            corners.to_vec(),
+            Stroke::new(1.0_f32, Color32::WHITE),
+        ));
+        painter.rect_stroke(rect, 2.0, Stroke::new(1.0_f32, Color32::from_gray(90)));
+        if response.clicked() || response.dragged() {
+            if let Some(p) = response.interact_pointer_pos() {
+                let tx = origin.0 as f32 + (p.x - rect.min.x) / scale;
+                let ty = origin.1 as f32 + (p.y - rect.min.y) / scale;
+                *x = (tx.max(0.0) as u32).min(w - 1);
+                *y = (ty.max(0.0) as u32).min(h - 1);
+            }
+        }
+    }
+}
