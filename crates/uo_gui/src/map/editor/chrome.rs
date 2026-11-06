@@ -72,10 +72,12 @@ pub fn chrome(
         }))
         .show_separator_line(false)
         .show_inside(ui, |ui| {
-            frame().show(ui, |ui| {
-                ui.set_min_width(ui.available_width());
-                super::bar::bar(ui, state, picker, assets, actions, requests);
-            });
+            frame()
+                .inner_margin(Margin::symmetric(10.0, 2.0))
+                .show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    super::bar::bar(ui, state, picker, assets, actions, requests);
+                });
         });
     egui::TopBottomPanel::bottom("map-editor-status")
         .frame(around(Margin {

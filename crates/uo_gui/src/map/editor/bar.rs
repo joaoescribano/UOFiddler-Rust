@@ -24,11 +24,11 @@ use egui_phosphor::regular as icon;
 pub(super) const PICK_HUE: &str = "map-stamp-hue";
 
 /// The height of each row of the bar.
-pub(super) const ROW: f32 = 30.0;
+pub(super) const ROW: f32 = 36.0;
 /// The height of the buttons inside a row.
-const BUTTON: f32 = 26.0;
+const BUTTON: f32 = 28.0;
 /// The space between the items of a row.
-const GAP: f32 = 6.0;
+const GAP: f32 = 8.0;
 /// The width of the divider between groups.
 const DIVIDER: f32 = 3.0;
 /// Below this width, what always applies goes compact (icons only).
@@ -204,7 +204,11 @@ fn row(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
     child.set_clip_rect(rect.intersect(ui.clip_rect()));
-    child.spacing_mut().item_spacing.x = GAP;
+    // Every control of the bar has the same height: buttons, combos, number fields and chips.
+    let spacing = child.spacing_mut();
+    spacing.item_spacing.x = GAP;
+    spacing.button_padding = egui::vec2(8.0, 4.0);
+    spacing.interact_size.y = BUTTON;
     add(&mut child);
 }
 

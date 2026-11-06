@@ -482,7 +482,9 @@ pub fn chip(ui: &mut Ui, text: &str, tint: Color32) -> Response {
 pub fn toggle_chip(ui: &mut Ui, on: &mut bool, text: &str) -> Response {
     let tint = if *on { color::ACCENT } else { color::TEXT_DIM };
     let galley = chip_galley(ui, text, tint);
-    let size = galley.size() + egui::vec2(18.0, 8.0);
+    let mut size = galley.size() + egui::vec2(18.0, 8.0);
+    // As tall as the other controls around it (a toolbar sets `interact_size`).
+    size.y = size.y.max(ui.spacing().interact_size.y);
     let (rect, mut response) = ui.allocate_exact_size(size, Sense::click());
     let hover = ui
         .ctx()

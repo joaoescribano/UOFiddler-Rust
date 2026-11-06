@@ -140,15 +140,13 @@ pub(super) fn bar_card(ui: &mut egui::Ui, state: &mut MapEditor, assets: &MapAss
     }
     let ctx = ui.ctx().clone();
     let (art, name) = describe(state, &ctx, assets);
+    // The same box as the bar's buttons: neutral border, the bar's height.
     let inner = (height - 4.0).max(12.0);
     let frame = egui::Frame::none()
         .fill(style::color::SURFACE_2)
-        .stroke(Stroke::new(
-            1.0_f32,
-            style::color::ACCENT.gamma_multiply(0.6),
-        ))
-        .rounding(egui::Rounding::same(4.0))
-        .inner_margin(Margin::symmetric(4.0, 1.0))
+        .stroke(ui.visuals().widgets.inactive.bg_stroke)
+        .rounding(ui.visuals().widgets.inactive.rounding)
+        .inner_margin(Margin::symmetric(6.0, 1.0))
         .show(ui, |ui| {
             ui.set_height(inner);
             ui.horizontal_centered(|ui| {
