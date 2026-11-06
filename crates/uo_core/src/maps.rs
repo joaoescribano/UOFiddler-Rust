@@ -1,9 +1,12 @@
-//! Ultima Online World Map Reader and Minimap Renderer (map*.mul, staidx*.mul, statics*.mul).
+//! Ultima Online World Map Reader and Minimap Renderer (map*.mul or map*LegacyMUL.uop,
+//! staidx*.mul, statics*.mul).
 
 use memmap2::Mmap;
 use std::collections::HashMap;
 use std::fs::File;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use crate::hash::hash_file_name;
 
 use crate::radar_col::RadarColManager;
 
@@ -67,11 +70,158 @@ struct MapDiff {
     stat_blocks: HashMap<u32, usize>,
 }
 
+/// Bytes of one 8x8 land block: a 4-byte header and 64 cells of (u16 tile, i8 z).
+pub const LAND_BLOCK_BYTES: usize = 196;
+/// Land blocks stored in each `build/mapNlegacymul/XXXXXXXX.dat` entry of a map UOP.
+pub const UOP_BLOCKS_PER_CHUNK: usize = 4096;
+
+/// Where the land blocks of a facet live: a flat `mapN.mul`, or a `mapNLegacyMUL.uop` whose
+/// entries are uncompressed runs of 4096 blocks.
+pub enum LandFile {
+    Mul(Mmap),
+    Uop {
+        mmap: Mmap,
+        /// Absolute data offset (header skipped) and length of each chunk entry.
+        chunks: Vec<Option<(usize, usize)>>,
+    },
+}
+
+impl LandFile {
+    /// Byte offset of a whole 196-byte block inside the file.
+    pub fn block_offset(&self, number: usize) -> Option<usize> {
+        let off = match self {
+            LandFile::Mul(_) => number * LAND_BLOCK_BYTES,
+            LandFile::Uop { chunks, .. } => {
+                let (start, len) = (*chunks.get(number / UOP_BLOCKS_PER_CHUNK)?)?;
+                let within = (number % UOP_BLOCKS_PER_CHUNK) * LAND_BLOCK_BYTES;
+                if within + LAND_BLOCK_BYTES > len {
+                    return None;
+                }
+                start + within
+            }
+        };
+        (off + LAND_BLOCK_BYTES <= self.bytes().len()).then_some(off)
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        match self {
+            LandFile::Mul(m) | LandFile::Uop { mmap: m, .. } => m,
+        }
+    }
+
+    /// Total land blocks the file holds.
+    pub fn block_count(&self) -> usize {
+        match self {
+            LandFile::Mul(m) => m.len() / LAND_BLOCK_BYTES,
+            LandFile::Uop { chunks, .. } => chunks
+                .iter()
+                .map(|c| c.map_or(0, |(_, len)| len / LAND_BLOCK_BYTES))
+                .sum(),
+        }
+    }
+
+    pub fn is_uop(&self) -> bool {
+        matches!(self, LandFile::Uop { .. })
+    }
+
+    /// Opens a map file, picking the format from the extension.
+    pub fn open(path: &Path, map_id: usize) -> Option<Self> {
+        let file = File::open(path).ok()?;
+        let mmap = unsafe { Mmap::map(&file) }.ok()?;
+        let is_uop = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("uop"));
+        if !is_uop {
+            return Some(LandFile::Mul(mmap));
+        }
+        let chunks = uop_chunks(&mmap, path, map_id)?;
+        Some(LandFile::Uop { mmap, chunks })
+    }
+}
+
+/// Reads the table of a map UOP and returns the chunk entries in order. The entry names are
+/// `build/<stem>/XXXXXXXX.dat`, where the stem is the file name (`map0legacymul`, or
+/// `map0xlegacymul` for the x variants).
+fn uop_chunks(m: &[u8], path: &Path, map_id: usize) -> Option<Vec<Option<(usize, usize)>>> {
+    let u32_at = |o: usize| m.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+    let u64_at = |o: usize| m.get(o..o + 8).map(|b| u64::from_le_bytes(b.try_into().unwrap()));
+    if u32_at(0)? != 0x0050_594D {
+        return None;
+    }
+    let stem = path.file_stem()?.to_str()?.to_lowercase();
+    let max_chunks = (MAP_DEFS[map_id].width as usize / 8 * MAP_DEFS[map_id].height as usize / 8)
+        .div_ceil(UOP_BLOCKS_PER_CHUNK)
+        + 8;
+    let hashes: HashMap<u64, usize> = (0..max_chunks)
+        .map(|i| (hash_file_name(&format!("build/{}/{:08}.dat", stem, i)), i))
+        .collect();
+    let mut chunks = vec![None; max_chunks];
+    let mut next = u64_at(12)? as usize;
+    while next != 0 {
+        let count = u32_at(next)? as usize;
+        let following = u64_at(next + 4)? as usize;
+        for i in 0..count {
+            let e = next + 12 + i * 34;
+            let offset = u64_at(e)? as usize;
+            let header = u32_at(e + 8)? as usize;
+            let compressed = u32_at(e + 12)? as usize;
+            let hash = u64_at(e + 20)?;
+            let flag = m.get(e + 32..e + 34).map(|b| u16::from_le_bytes([b[0], b[1]]))?;
+            if offset == 0 || flag != 0 {
+                continue;
+            }
+            if let Some(&n) = hashes.get(&hash) {
+                chunks[n] = Some((offset + header, compressed));
+            }
+        }
+        next = following;
+    }
+    while chunks.last().is_some_and(|c| c.is_none()) {
+        chunks.pop();
+    }
+    Some(chunks)
+}
+
+/// Finds the files of a facet: `mapN.mul` first, then `mapNLegacyMUL.uop`, then the `x`
+/// variants (`mapNxLegacyMUL.uop`, `staidxNx.mul`) shipped for some facets. `find` resolves a
+/// file name inside the client folder.
+pub fn map_files(
+    map_id: usize,
+    find: impl Fn(&str) -> Option<PathBuf>,
+) -> (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>) {
+    let map = [
+        format!("map{}.mul", map_id),
+        format!("map{}LegacyMUL.uop", map_id),
+        format!("map{}x.mul", map_id),
+        format!("map{}xLegacyMUL.uop", map_id),
+    ]
+    .iter()
+    .find_map(|n| find(n));
+    let statics = |suffix: &str| {
+        Some((
+            find(&format!("staidx{}{}.mul", map_id, suffix))?,
+            find(&format!("statics{}{}.mul", map_id, suffix))?,
+        ))
+    };
+    let (staidx, stat) = statics("").or_else(|| statics("x")).unzip();
+    (map, staidx, stat)
+}
+
+/// The files a facet was loaded from, kept so the map editor can write back to them.
+#[derive(Clone, Debug, Default)]
+pub struct MapPaths {
+    pub map: Option<PathBuf>,
+    pub staidx: Option<PathBuf>,
+    pub statics: Option<PathBuf>,
+}
+
 pub struct MapManager {
-    map_mmaps: [Option<Mmap>; 6],
+    map_mmaps: [Option<LandFile>; 6],
     staidx_mmaps: [Option<Mmap>; 6],
     statics_mmaps: [Option<Mmap>; 6],
     diffs: [MapDiff; 6],
+    pub paths: [MapPaths; 6],
     pub actual_widths: [u32; 6],
 }
 
@@ -109,6 +259,7 @@ impl MapManager {
             staidx_mmaps: [None, None, None, None, None, None],
             statics_mmaps: [None, None, None, None, None, None],
             diffs: Default::default(),
+            paths: Default::default(),
             actual_widths: [7168, 7168, 2304, 2560, 1448, 1280],
         }
     }
@@ -124,17 +275,24 @@ impl MapManager {
             return;
         }
 
+        self.paths[map_id] = MapPaths {
+            map: map_path.clone(),
+            staidx: staidx_path.clone(),
+            statics: statics_path.clone(),
+        };
+        self.map_mmaps[map_id] = None;
+        self.staidx_mmaps[map_id] = None;
+        self.statics_mmaps[map_id] = None;
+
         if let Some(p) = map_path {
-            if let Ok(file) = File::open(&p) {
-                if let Ok(mmap) = unsafe { Mmap::map(&file) } {
-                    let total_blocks = mmap.len() / 196;
-                    let h_blocks = (MAP_DEFS[map_id].height / 8) as usize;
-                    if h_blocks > 0 {
-                        let w_blocks = total_blocks / h_blocks;
-                        self.actual_widths[map_id] = (w_blocks * 8) as u32;
-                    }
-                    self.map_mmaps[map_id] = Some(mmap);
+            if let Some(land) = LandFile::open(&p, map_id) {
+                let total_blocks = land.block_count();
+                let h_blocks = (MAP_DEFS[map_id].height / 8) as usize;
+                if h_blocks > 0 {
+                    let w_blocks = total_blocks / h_blocks;
+                    self.actual_widths[map_id] = (w_blocks * 8) as u32;
                 }
+                self.map_mmaps[map_id] = Some(land);
             }
         }
 
@@ -203,8 +361,31 @@ impl MapManager {
                 }
             }
         }
-        let off = number as usize * 196;
-        (off + 196 <= map.len()).then(|| &map[off + 4..off + 196])
+        let off = map.block_offset(number as usize)?;
+        Some(&map.bytes()[off + 4..off + LAND_BLOCK_BYTES])
+    }
+
+    /// The land file of a facet (to know its format and where each block lives).
+    pub fn land_file(&self, map_id: usize) -> Option<&LandFile> {
+        self.map_mmaps.get(map_id)?.as_ref()
+    }
+
+    /// Releases the memory maps of a facet, so its files can be rewritten (Windows refuses to
+    /// replace a mapped file). `reload` maps them again from `paths`.
+    pub fn unload(&mut self, map_id: usize) {
+        if map_id < 6 {
+            self.map_mmaps[map_id] = None;
+            self.staidx_mmaps[map_id] = None;
+            self.statics_mmaps[map_id] = None;
+        }
+    }
+
+    /// Maps a facet again from the files it was loaded from.
+    pub fn reload(&mut self, map_id: usize) {
+        if map_id < 6 {
+            let p = self.paths[map_id].clone();
+            self.load_map(map_id, p.map, p.staidx, p.statics);
+        }
     }
 
     /// Raw static records (7 bytes each) of a block, optionally patched by stadif.

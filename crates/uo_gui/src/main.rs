@@ -1226,15 +1226,8 @@ impl UoFiddlerApp {
         // 16. Maps
         self.map_mgr = MapManager::new();
         for m_id in 0..6 {
-            let m_name = format!("map{}.mul", m_id);
-            let s_idx = format!("staidx{}.mul", m_id);
-            let s_mul = format!("statics{}.mul", m_id);
-            self.map_mgr.load_map(
-                m_id,
-                self.file_manager.get_file_path(&m_name),
-                self.file_manager.get_file_path(&s_idx),
-                self.file_manager.get_file_path(&s_mul),
-            );
+            let (m_path, s_idx, s_mul) = uo_core::map_files(m_id, |n| self.file_manager.get_file_path(n));
+            self.map_mgr.load_map(m_id, m_path, s_idx, s_mul);
             let f = |n: String| self.file_manager.get_file_path(&n);
             self.map_mgr.load_diff(
                 m_id,
