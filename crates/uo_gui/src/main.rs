@@ -856,6 +856,11 @@ impl Default for UoFiddlerApp {
                 app.map_y = n;
             }
             app.map_use_diff = !p.contains(&"nodiff");
+            // UOFIDDLER_EDITOR=<tool>[/x,y][/...] opens the map editor (see MapEditor::focus).
+            if let Ok(spec) = std::env::var("UOFIDDLER_EDITOR") {
+                app.map_panel.open_editor(app.map_id);
+                app.map_panel.editor.focus(&spec);
+            }
             // Isometric view options: zoom=<f>, maxz=<z>, noroofs, grid
             for opt in &p[1..] {
                 if let Some(z) = opt.strip_prefix("zoom=").and_then(|z| z.parse().ok()) {
@@ -2261,6 +2266,20 @@ impl eframe::App for UoFiddlerApp {
             });
 
             ctx.request_repaint_after(Duration::from_millis(16));
+            return;
+        }
+
+        // The map editor takes the whole window while it is open.
+        if self.map_panel.editing() {
+            let mut res = map::MapRes {
+                maps: &mut self.map_mgr,
+                art: self.art_index.as_ref(),
+                textures: self.texture_index.as_ref(),
+                tiledata: self.tiledata.as_ref(),
+                hues: self.hues.as_ref(),
+                radar: self.radar_col.as_ref(),
+            };
+            self.map_panel.fullscreen(ctx, &mut res, self.map_id, &mut self.map_x, &mut self.map_y);
             return;
         }
 

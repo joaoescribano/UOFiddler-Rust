@@ -556,7 +556,7 @@ mod tests {
     /// The cases, with the same strokes as UOIddler's harness.
     fn run(name: &str) -> World {
         let cave = seeded("cave-floor");
-        let floor = seeded("piso-de-caverna");
+        let floor = seeded("cave-floor-statics");
         let mut w = World::default();
         match name {
             "land_sq1" => w.paint_land(&cave, &square(10, 10, 1)),
@@ -670,7 +670,7 @@ mod tests {
         // Without the inner corner 14, the most similar one with more center: the whole one.
         assert_eq!(terrain::pick(&t, ALL & !TOP, 0), Some(584));
         // The floor prefers the piece that covers the core corners.
-        let floor = transitions(&seeded("piso-de-caverna"));
+        let floor = transitions(&seeded("cave-floor-statics"));
         assert_eq!(
             pick_floor_piece(&floor, BOTTOM, 0),
             Some(1353),

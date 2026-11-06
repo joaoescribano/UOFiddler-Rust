@@ -25,6 +25,10 @@ pub struct MapPanel {
     pub view: IsoView,
     /// Pending edits, one set per facet.
     pub edits: [MapEdits; 6],
+    /// The full-screen editor, and the facet it was last opened on.
+    pub editor: MapEditor,
+    editor_map: Option<usize>,
+    picker: Picker,
     /// The (facet, x, y) the view was last put over, to follow the app's coordinates.
     synced: Option<(usize, u32, u32)>,
     radar: Option<(egui::TextureHandle, usize, u32, u32, u64)>,
@@ -36,6 +40,9 @@ impl Default for MapPanel {
         Self {
             view: IsoView::default(),
             edits: Default::default(),
+            editor: MapEditor::default(),
+            editor_map: None,
+            picker: Picker::default(),
             synced: None,
             radar: None,
             hover: None,
@@ -61,6 +68,7 @@ impl MapPanel {
             textures: res.textures,
             tiledata: res.tiledata,
             hues: res.hues,
+            cache: Default::default(),
         };
         if !res.maps.has_map(map_id) {
             ui.label(
@@ -109,6 +117,7 @@ impl MapPanel {
         if let Some(radar) = res.radar {
             self.radar_inset(ui, rect, res.maps, radar, map_id, x, y);
         }
+        self.edit_button(ui, rect, map_id);
 
         let status = Rect::from_min_max(pos2(full.min.x, rect.max.y), full.max);
         ui.allocate_rect(status, egui::Sense::hover());
@@ -119,6 +128,36 @@ impl MapPanel {
             egui::FontId::monospace(12.0),
             ui.visuals().text_color(),
         );
+    }
+
+    /// The "Edit" button over the view's top-left corner, with the facet's pending changes.
+    fn edit_button(&mut self, ui: &mut egui::Ui, view: Rect, map_id: usize) {
+        let pending = self.edits[map_id].len();
+        let mut open = false;
+        egui::Area::new(ui.id().with("map-edit-button"))
+            .fixed_pos(view.min + vec2(8.0, 8.0))
+            .order(egui::Order::Middle)
+            .show(ui.ctx(), |ui| {
+                ui.horizontal(|ui| {
+                    let label = format!("{}  {}", egui_phosphor::regular::PENCIL_SIMPLE, t("map.edit"));
+                    if ui
+                        .add(egui::Button::new(egui::RichText::new(label).strong()).min_size(vec2(0.0, 28.0)))
+                        .on_hover_text(t("map.edit_hint"))
+                        .clicked()
+                    {
+                        open = true;
+                    }
+                    if pending > 0 {
+                        ui.label(
+                            egui::RichText::new(tf("map.pending", &[&pending]))
+                                .color(Color32::from_rgb(0xd8, 0xa8, 0x4e)),
+                        );
+                    }
+                });
+            });
+        if open || ui.input(|i| i.key_pressed(egui::Key::F11)) {
+            self.open_editor(map_id);
+        }
     }
 
     fn status_text(&self, assets: &MapAssets) -> String {
@@ -254,6 +293,201 @@ impl MapPanel {
                 let ty = origin.1 as f32 + (p.y - rect.min.y) / scale;
                 *x = (tx.max(0.0) as u32).min(w - 1);
                 *y = (ty.max(0.0) as u32).min(h - 1);
+            }
+        }
+    }
+}
+
+impl MapPanel {
+    /// The editor is open (the app hands it the whole window).
+    pub fn editing(&self) -> bool {
+        self.editor.editing
+    }
+
+    /// Opens the full-screen editor over the view, on a facet.
+    pub fn open_editor(&mut self, map_id: usize) {
+        if self.editor_map != Some(map_id) {
+            self.editor.reset(&self.edits[map_id]);
+            self.editor_map = Some(map_id);
+        }
+        self.editor.set_editing(true);
+    }
+
+    /// The full-screen editor, filling the window: the frame around (`editor::chrome`) and the
+    /// map in the middle, with the tools acting on it. `x, y` follow the camera, as in the view.
+    pub fn fullscreen(
+        &mut self,
+        ctx: &egui::Context,
+        res: &mut MapRes,
+        map_id: usize,
+        x: &mut u32,
+        y: &mut u32,
+    ) {
+        if self.editor_map != Some(map_id) {
+            self.editor.reset(&self.edits[map_id]);
+            self.editor_map = Some(map_id);
+        }
+        let mut actions = Vec::new();
+        let mut requests = Vec::new();
+        {
+            let assets = MapAssets {
+                maps: res.maps,
+                map_id,
+                edits: &self.edits[map_id],
+                art: res.art,
+                textures: res.textures,
+                tiledata: res.tiledata,
+                hues: res.hues,
+                cache: Default::default(),
+            };
+            editor::chrome::chrome(
+                ctx,
+                &mut self.editor,
+                &mut self.picker,
+                &assets,
+                &mut actions,
+                &mut requests,
+            );
+            egui::CentralPanel::default()
+                .frame(egui::Frame::none())
+                .show(ctx, |ui| {
+                    let rect = ui.max_rect();
+                    let over_ui = !ui.rect_contains_pointer(rect) || ctx.is_pointer_over_area();
+                    self.editor.camera(ctx, &mut self.view, over_ui);
+                    self.view.cut = self.editor.cutaway();
+                    self.view.left_drag_pans = false;
+                    self.view.show_grid = false;
+                    let (response, t, _) = self.view.show(ui, rect, &assets);
+                    let hover = response.hover_pos();
+                    let (pressed, down, alt, ctrl) = ctx.input(|i| {
+                        (
+                            i.pointer.primary_pressed(),
+                            i.pointer.primary_down(),
+                            i.modifiers.alt,
+                            i.modifiers.command,
+                        )
+                    });
+                    let tile = hover.map(|p| {
+                        let w = t.to_world(p);
+                        self.editor
+                            .pick(&assets, w.x, w.y, self.editor.hover_z(&assets))
+                    });
+                    self.editor.cursor_screen = hover;
+                    let pointer = Pointer {
+                        tile,
+                        pressed: pressed && hover.is_some(),
+                        down,
+                        alt,
+                        ctrl,
+                    };
+                    actions.extend(self.editor.pointer(&assets, pointer));
+                    if let Some(overlay) = self.editor.overlay().cloned() {
+                        let painter = ui.painter_at(rect);
+                        editor::overlay::paint(ctx, &painter, &t, &overlay, &mut self.view, &assets);
+                    }
+                });
+        }
+        if !actions.is_empty() {
+            for tile in actions {
+                self.edits[map_id].set(tile);
+            }
+            self.view.generation += 1;
+        }
+        for request in requests {
+            self.request(request, res.maps, map_id);
+        }
+        let (cx, cy) = self.view.center_tile();
+        let (w, h) = (res.maps.actual_widths[map_id] as i32, MAP_DEFS[map_id].height as i32);
+        *x = cx.clamp(0, w - 1) as u32;
+        *y = cy.clamp(0, h - 1) as u32;
+        self.synced = Some((map_id, *x, *y));
+    }
+
+    /// What the editor asked for: saving, exporting, importing, discarding, leaving.
+    fn request(&mut self, request: Request, maps: &mut MapManager, map_id: usize) {
+        match request {
+            Request::Exit => self.editor.set_editing(false),
+            Request::Save | Request::SaveAs => {
+                if self.edits[map_id].is_empty() {
+                    self.editor.say(t("map.nothing_to_save"), true);
+                    return;
+                }
+                let target_dir = if request == Request::SaveAs {
+                    match rfd::FileDialog::new().set_title(t("map.save_as")).pick_folder() {
+                        Some(dir) => Some(dir),
+                        None => return,
+                    }
+                } else {
+                    None
+                };
+                let options = SaveOptions {
+                    target_dir,
+                    backup: true,
+                };
+                match save(maps, map_id, &self.edits[map_id], &options) {
+                    Ok(report) => {
+                        let place = maps.paths[map_id]
+                            .map
+                            .as_ref()
+                            .and_then(|p| p.parent())
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default();
+                        self.edits[map_id].clear();
+                        self.editor.reset(&self.edits[map_id]);
+                        self.editor.say(
+                            tf(
+                                "map.saved_files",
+                                &[&report.land_blocks, &report.static_blocks, &place],
+                            ),
+                            false,
+                        );
+                    }
+                    Err(e) => self.editor.say(tf("map.save_failed", &[&e]), true),
+                }
+                self.view.generation += 1;
+            }
+            Request::Discard => {
+                self.edits[map_id].clear();
+                self.editor.reset(&self.edits[map_id]);
+                self.view.generation += 1;
+                self.editor.say(t("map.discarded"), false);
+            }
+            Request::Export => {
+                let name = format!("map{}_changes.json", map_id);
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title(t("map.export"))
+                    .set_file_name(&name)
+                    .add_filter("JSON", &["json"])
+                    .save_file()
+                {
+                    match std::fs::write(&path, self.edits[map_id].to_json()) {
+                        Ok(()) => self.editor.say(path.display().to_string(), false),
+                        Err(e) => self.editor.say(e.to_string(), true),
+                    }
+                }
+            }
+            Request::Import => {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title(t("map.import"))
+                    .add_filter("JSON", &["json"])
+                    .pick_file()
+                {
+                    let loaded = std::fs::read_to_string(&path)
+                        .map_err(|e| e.to_string())
+                        .and_then(|text| MapEdits::from_json(&text));
+                    match loaded {
+                        Ok(edits) => {
+                            for tile in edits.tiles() {
+                                self.edits[map_id].set(tile.clone());
+                            }
+                            self.editor.reset(&self.edits[map_id]);
+                            self.view.generation += 1;
+                            self.editor
+                                .say(tf("map.imported", &[&edits.len()]), false);
+                        }
+                        Err(e) => self.editor.say(e, true),
+                    }
+                }
             }
         }
     }

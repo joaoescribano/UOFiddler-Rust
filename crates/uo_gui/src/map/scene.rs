@@ -166,7 +166,7 @@ impl Scene {
         let mut statics = 0;
         for by in region.y0.div_euclid(8)..region.y1.div_euclid(8) {
             for bx in region.x0.div_euclid(8)..region.x1.div_euclid(8) {
-                let Some(block) = blocks.block(bx, by).cloned() else {
+                let Some(block) = blocks.block(bx, by) else {
                     continue;
                 };
                 for cy in 0..8 {

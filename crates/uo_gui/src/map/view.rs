@@ -2,7 +2,7 @@
 //! through the atlas in a few meshes, and the tile under the cursor.
 
 use super::assets::MapAssets;
-use super::atlas::Atlas;
+use super::atlas::{Atlas, SpriteKey};
 use super::iso::{tile_at, tile_origin, TILE_HALF, Z_STEP};
 use super::scene::{in_quad, Cut, Item, Kind, Region, Scene, SceneKey};
 use eframe::egui::{self, pos2, vec2, Color32, Pos2, Rect, Sense};
@@ -140,8 +140,8 @@ impl IsoView {
             self.camera -= response.drag_delta() / self.zoom;
         }
         if response.hovered() {
-            let scroll = ui.input(|i| i.raw_scroll_delta.y);
-            if scroll != 0.0 {
+            let (scroll, ctrl) = ui.input(|i| (i.raw_scroll_delta.y, i.modifiers.command));
+            if scroll != 0.0 && !ctrl {
                 // Zoom around the cursor.
                 let before = Transform {
                     rect,
@@ -317,6 +317,36 @@ impl IsoView {
             z,
             static_hit,
         })
+    }
+
+    /// Draws one static, tinted (the editor's see-through ghosts), at a tile and height.
+    #[allow(clippy::too_many_arguments)]
+    pub fn paint_static(
+        &mut self,
+        ctx: &egui::Context,
+        painter: &egui::Painter,
+        t: &Transform,
+        assets: &MapAssets,
+        (graphic, hue): (u16, u16),
+        (x, y, z): (i32, i32, i32),
+        tint: Color32,
+    ) {
+        let hue = hue & 0x3FFF;
+        let Some(sprite) = self.atlas.get(ctx, SpriteKey::Static { graphic, hue }, || {
+            assets.static_image(graphic, hue)
+        }) else {
+            return;
+        };
+        let (ox, oy) = tile_origin(x, y);
+        let at = pos2(
+            ox + TILE_HALF - (sprite.w / 2.0).floor(),
+            oy + 2.0 * TILE_HALF - sprite.h - z as f32 * Z_STEP,
+        );
+        let r = Rect::from_min_size(t.to_screen(at), vec2(sprite.w, sprite.h) * t.zoom);
+        let uv = Rect::from_min_max(sprite.uv(0.0, 0.0), sprite.uv(1.0, 1.0));
+        let mut mesh = egui::Mesh::with_texture(self.atlas.texture(sprite.page));
+        mesh.add_rect_with_uv(r, uv, tint);
+        painter.add(egui::Shape::mesh(mesh));
     }
 
     /// Statics are picked by their box (the atlas pixels live on the GPU); a box that is mostly

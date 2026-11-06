@@ -2,7 +2,9 @@
 //! tiledata and the art.
 
 use super::atlas::Image;
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use uo_core::map_edit::{read_block, StaticItem};
 use uo_core::{
     apply_hue_bytes, decode_land, decode_static, decode_texture, FileIndex, HuesManager,
@@ -19,6 +21,8 @@ pub struct MapAssets<'a> {
     pub textures: Option<&'a FileIndex>,
     pub tiledata: Option<&'a TileDataManager>,
     pub hues: Option<&'a HuesManager>,
+    /// Blocks already read this frame (the assets live for one frame, so this never goes stale).
+    pub cache: RefCell<HashMap<(i32, i32), Option<Rc<MapBlock>>>>,
 }
 
 impl<'a> MapAssets<'a> {
@@ -36,13 +40,34 @@ impl<'a> MapAssets<'a> {
     }
 
     /// A block with the pending edits folded in.
-    pub fn block(&self, bx: i32, by: i32) -> Option<MapBlock> {
+    pub fn block(&self, bx: i32, by: i32) -> Option<Rc<MapBlock>> {
         if bx < 0 || by < 0 {
             return None;
         }
-        let mut block = read_block(self.maps, self.map_id, bx as u32, by as u32)?;
-        self.edits.apply(&mut block);
-        Some(block)
+        if let Some(known) = self.cache.borrow().get(&(bx, by)) {
+            return known.clone();
+        }
+        let block = read_block(self.maps, self.map_id, bx as u32, by as u32).map(|mut b| {
+            self.edits.apply(&mut b);
+            Rc::new(b)
+        });
+        self.cache.borrow_mut().insert((bx, by), block.clone());
+        block
+    }
+
+    /// Land graphic and height of a tile (edits included).
+    pub fn land(&self, x: i32, y: i32) -> Option<(u16, i8)> {
+        let b = self.block(x.div_euclid(8), y.div_euclid(8))?;
+        let c = b.cell(x, y);
+        Some((c.graphic, c.z))
+    }
+
+    /// The land height of a tile, when the tile is on the map.
+    pub fn land_z(&self, x: i32, y: i32) -> Option<i8> {
+        if x < 0 || y < 0 {
+            return None;
+        }
+        self.land(x, y).map(|l| l.1)
     }
 
     /// A block as the client files hold it, without the edits.
@@ -123,37 +148,27 @@ impl<'a> MapAssets<'a> {
     }
 }
 
-/// Blocks read once and kept for a pass over a region (scene build, brush, picking).
+/// A shorthand over the frame cache, kept for the scene and the panel.
 pub struct Blocks<'b, 'a> {
     pub assets: &'b MapAssets<'a>,
-    cache: HashMap<(i32, i32), Option<MapBlock>>,
 }
 
 impl<'b, 'a> Blocks<'b, 'a> {
     pub fn new(assets: &'b MapAssets<'a>) -> Self {
-        Self {
-            assets,
-            cache: HashMap::new(),
-        }
+        Self { assets }
     }
 
-    pub fn block(&mut self, bx: i32, by: i32) -> Option<&MapBlock> {
-        let assets = self.assets;
-        self.cache
-            .entry((bx, by))
-            .or_insert_with(|| assets.block(bx, by))
-            .as_ref()
+    pub fn block(&mut self, bx: i32, by: i32) -> Option<Rc<MapBlock>> {
+        self.assets.block(bx, by)
     }
 
     /// Land graphic and height of a tile (edits included).
     pub fn land(&mut self, x: i32, y: i32) -> Option<(u16, i8)> {
-        let b = self.block(x.div_euclid(8), y.div_euclid(8))?;
-        let c = b.cell(x, y);
-        Some((c.graphic, c.z))
+        self.assets.land(x, y)
     }
 
     pub fn land_z(&mut self, x: i32, y: i32) -> i8 {
-        self.land(x, y).map_or(0, |l| l.1)
+        self.assets.land(x, y).map_or(0, |l| l.1)
     }
 
     /// The statics of a tile (edits included).

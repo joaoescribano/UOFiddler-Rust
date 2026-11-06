@@ -150,7 +150,7 @@ impl BorderSet {
 
 /// The border sets that come with the editor: UOIddler's three, with the same tiles, in the
 /// same order, as its database. `cave-floor` is the "Cave in the black", `furrow-grass` the
-/// "Furrow Grass" and `piso-de-caverna` the "Cave floor" (floor statics, with the borders
+/// "Furrow Grass" and `cave-floor-statics` the "Cave floor" (floor statics, with the borders
 /// inside the stroke).
 pub fn seed_border_sets() -> Vec<BorderSet> {
     let set = |name: &str, kind: BorderKind, masks: &[(u8, &[u16])]| BorderSet {
@@ -198,7 +198,7 @@ pub fn seed_border_sets() -> Vec<BorderSet> {
             ],
         ),
         set(
-            "piso-de-caverna",
+            "cave-floor-statics",
             BorderKind::Floor,
             &[
                 (1, &[1361]),
@@ -289,7 +289,7 @@ mod tests {
         assert_eq!(cave.mask_of(1595), Some(corner::ALL));
         assert_eq!(cave.tiles(corner::ALL & !corner::TOP), [613]);
         assert_eq!(get("furrow-grass").tiles(corner::ALL), [9]);
-        let floor = get("piso-de-caverna");
+        let floor = get("cave-floor-statics");
         assert_eq!(floor.kind, BorderKind::Floor);
         assert_eq!(floor.tiles(corner::ALL)[0], 0x053B);
         assert_eq!(floor.masks.len(), 9);
