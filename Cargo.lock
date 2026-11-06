@@ -3293,6 +3293,7 @@ dependencies = [
  "egui_extras",
  "image",
  "rfd",
+ "serde",
  "uo_core",
 ]
 

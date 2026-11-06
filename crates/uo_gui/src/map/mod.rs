@@ -5,6 +5,7 @@
 pub mod assets;
 pub mod atlas;
 pub mod capture;
+pub mod editor;
 pub mod heights;
 pub mod iso;
 pub mod panel;
