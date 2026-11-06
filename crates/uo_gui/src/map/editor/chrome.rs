@@ -34,58 +34,100 @@ pub enum Request {
     Exit,
 }
 
-/// The frame of a bar or column of the editor.
-fn frame() -> egui::Frame {
+/// The frame of a bar or column of the editor: the same card as the Map tab's toolbar.
+pub fn frame() -> egui::Frame {
     egui::Frame::none()
-        .fill(style::color::SURFACE.gamma_multiply(0.96))
+        .fill(style::color::SURFACE)
         .stroke(Stroke::new(1.0_f32, style::color::BORDER))
+        .rounding(egui::Rounding::same(style::RADIUS))
         .inner_margin(Margin::symmetric(10.0, 6.0))
 }
 
-/// The editor's frame this frame: the panels around the map. What the actions changed goes into
-/// `actions`; what needs the client files, into `requests`.
+/// The gap between the editor's cards and the map.
+const GAP: f32 = 4.0;
+
+/// The editor's frame inside the Map tab: the bar on top, the status at the bottom and the
+/// inspector on the right, each a card like the tab's toolbar; the map goes in what is left
+/// (the caller's `CentralPanel::show_inside`). What the actions changed goes into `actions`; what
+/// needs the client files, into `requests`.
 pub fn chrome(
-    ctx: &egui::Context,
+    ui: &mut egui::Ui,
     state: &mut MapEditor,
     picker: &mut picker::Picker,
     assets: &MapAssets,
     actions: &mut Changes,
     requests: &mut Vec<Request>,
 ) {
+    let ctx = ui.ctx().clone();
     if let Some(hue) = picker.take_result(PICK_HUE) {
         state.hue = hue as u16;
     }
     state.border_picks(picker);
-    shortcuts(ctx, state, assets, actions, requests);
+    shortcuts(&ctx, state, assets, actions, requests);
+    let around = |m: Margin| egui::Frame::none().inner_margin(m);
     egui::TopBottomPanel::top("map-editor-bar")
-        .frame(frame())
-        .show(ctx, |ui| {
-            super::bar::bar(ui, state, picker, assets, actions, requests);
+        .frame(around(Margin {
+            bottom: GAP,
+            ..Margin::ZERO
+        }))
+        .show_separator_line(false)
+        .show_inside(ui, |ui| {
+            frame().show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                super::bar::bar(ui, state, picker, assets, actions, requests);
+            });
         });
     egui::TopBottomPanel::bottom("map-editor-status")
-        .frame(frame())
-        .show(ctx, |ui| status(ui, state, assets));
+        .frame(around(Margin {
+            top: GAP,
+            ..Margin::ZERO
+        }))
+        .show_separator_line(false)
+        .show_inside(ui, |ui| {
+            frame().show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                status(ui, state, assets);
+            });
+        });
     egui::SidePanel::right("map-editor-inspector")
         .resizable(false)
         .exact_width(INSPECTOR_WIDTH)
-        .frame(frame().inner_margin(Margin::same(10.0)))
-        .show(ctx, |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("map-inspector")
-                .auto_shrink([false, false])
-                .show(ui, |ui| inspector(ui, state, assets, actions));
+        .frame(around(Margin {
+            left: GAP,
+            ..Margin::ZERO
+        }))
+        .show_separator_line(false)
+        .show_inside(ui, |ui| {
+            frame().inner_margin(Margin::same(10.0)).show(ui, |ui| {
+                ui.set_min_size(ui.available_size());
+                egui::ScrollArea::vertical()
+                    .id_salt("map-inspector")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| inspector(ui, state, assets, actions));
+            });
         });
+}
+
+/// What floats over the map: the height band on the map's right edge, the palette, the brush
+/// thumbnail, the dialogs and the picker. `view` is where the map is drawn.
+pub fn floating(
+    ctx: &egui::Context,
+    view: egui::Rect,
+    state: &mut MapEditor,
+    picker: &mut picker::Picker,
+    assets: &MapAssets,
+    actions: &mut Changes,
+) {
     egui::Area::new(egui::Id::new("map-editor-band"))
-        .anchor(egui::Align2::RIGHT_CENTER, [-(INSPECTOR_WIDTH + 14.0), 0.0])
+        .pivot(egui::Align2::RIGHT_CENTER)
+        .fixed_pos(view.right_center() - egui::vec2(12.0, 0.0))
         .show(ctx, |ui| {
-            frame()
-                .rounding(egui::Rounding::same(style::RADIUS))
-                .show(ui, |ui| {
-                    band_slider(ui, &mut state.band);
-                });
+            frame().show(ui, |ui| {
+                band_slider(ui, &mut state.band);
+            });
         });
     if state.palette {
-        palette(ctx, state, picker, assets);
+        palette(ctx, view, state, picker, assets);
     }
     super::brush_card::follower(ctx, state, assets);
     if state.border_dialog.open {
@@ -808,6 +850,7 @@ const POINTS_PER_NOTCH: f32 = 50.0;
 /// picker's grid. A click picks and arms the right tool.
 fn palette(
     ctx: &egui::Context,
+    view: egui::Rect,
     state: &mut MapEditor,
     picker: &mut picker::Picker,
     assets: &MapAssets,
@@ -826,7 +869,7 @@ fn palette(
     .id(egui::Id::new("map-editor-palette"))
     .frame(egui::Frame::window(&ctx.style()).inner_margin(Margin::same(10.0)))
     .open(&mut open)
-    .default_pos([12.0, 110.0])
+    .default_pos(view.min + egui::vec2(12.0, 12.0))
     .fixed_size(size)
     .collapsible(true)
     .show(ctx, |ui| {

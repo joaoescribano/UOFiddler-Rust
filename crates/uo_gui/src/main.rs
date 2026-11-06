@@ -2269,22 +2269,10 @@ impl eframe::App for UoFiddlerApp {
             return;
         }
 
-        // The map editor takes the whole window while it is open.
-        if self.map_panel.editing() {
-            let mut res = map::MapRes {
-                maps: &mut self.map_mgr,
-                art: self.art_index.as_ref(),
-                textures: self.texture_index.as_ref(),
-                tiledata: self.tiledata.as_ref(),
-                hues: self.hues.as_ref(),
-                radar: self.radar_col.as_ref(),
-            };
-            self.map_panel.fullscreen(ctx, &mut res, self.map_id, &mut self.map_x, &mut self.map_y);
-            return;
+        // Global Keyboard navigation (the map editor has its own keys)
+        if !self.map_panel.editing() {
+            self.handle_keyboard_navigation(ctx);
         }
-
-        // Global Keyboard navigation
-        self.handle_keyboard_navigation(ctx);
 
         // ------------------ 2. MODERN TOP MENU & TWO-TIER TABS HEADER ------------------
         egui::TopBottomPanel::top("top_panel")
@@ -5219,6 +5207,19 @@ impl UoFiddlerApp {
     }
 
     fn render_map_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        // The map editor opens in place of the viewer, in the same tab.
+        if self.map_panel.editing() {
+            let mut res = map::MapRes {
+                maps: &mut self.map_mgr,
+                art: self.art_index.as_ref(),
+                textures: self.texture_index.as_ref(),
+                tiledata: self.tiledata.as_ref(),
+                hues: self.hues.as_ref(),
+                radar: self.radar_col.as_ref(),
+            };
+            self.map_panel.editor_ui(ui, &mut res, self.map_id, &mut self.map_x, &mut self.map_y);
+            return;
+        }
         let mut map_changed = self.map_toolbar(ui);
         ui.add_space(4.0);
 

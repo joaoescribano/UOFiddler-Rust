@@ -299,11 +299,12 @@ impl MapPanel {
         self.editor.set_editing(true);
     }
 
-    /// The full-screen editor, filling the window: the frame around (`editor::chrome`) and the
-    /// map in the middle, with the tools acting on it. `x, y` follow the camera, as in the view.
-    pub fn fullscreen(
+    /// The editor inside the Map tab, in place of the viewer: its cards around (`editor::chrome`)
+    /// and the map in the middle, with the tools acting on it. `x, y` follow the camera, as in the
+    /// view.
+    pub fn editor_ui(
         &mut self,
-        ctx: &egui::Context,
+        ui: &mut egui::Ui,
         res: &mut MapRes,
         map_id: usize,
         x: &mut u32,
@@ -313,6 +314,7 @@ impl MapPanel {
             self.editor.reset(&self.edits[map_id]);
             self.editor_map = Some(map_id);
         }
+        let ctx = ui.ctx().clone();
         let mut actions = Vec::new();
         let mut requests = Vec::new();
         {
@@ -327,24 +329,26 @@ impl MapPanel {
                 cache: Default::default(),
             };
             editor::chrome::chrome(
-                ctx,
+                ui,
                 &mut self.editor,
                 &mut self.picker,
                 &assets,
                 &mut actions,
                 &mut requests,
             );
+            let mut view_rect = Rect::NOTHING;
             egui::CentralPanel::default()
                 .frame(egui::Frame::none())
-                .show(ctx, |ui| {
+                .show_inside(ui, |ui| {
                     let rect = ui.max_rect();
+                    view_rect = rect;
                     let over_ui = !ui.rect_contains_pointer(rect) || ctx.is_pointer_over_area();
-                    self.editor.camera(ctx, &mut self.view, over_ui);
+                    self.editor.camera(&ctx, &mut self.view, over_ui);
                     self.view.cut = self.editor.cutaway();
                     self.view.left_drag_pans = false;
                     self.view.show_grid = false;
                     let (response, t, _) = self.view.show(ui, rect, &assets);
-                    let hover = response.hover_pos();
+                    let hover = response.hover_pos().filter(|_| !ctx.is_pointer_over_area());
                     let (pressed, down, alt, ctrl) = ctx.input(|i| {
                         (
                             i.pointer.primary_pressed(),
@@ -370,7 +374,7 @@ impl MapPanel {
                     if let Some(overlay) = self.editor.overlay().cloned() {
                         let painter = ui.painter_at(rect);
                         editor::overlay::paint(
-                            ctx,
+                            &ctx,
                             &painter,
                             &t,
                             &overlay,
@@ -379,6 +383,14 @@ impl MapPanel {
                         );
                     }
                 });
+            editor::chrome::floating(
+                &ctx,
+                view_rect,
+                &mut self.editor,
+                &mut self.picker,
+                &assets,
+                &mut actions,
+            );
         }
         if !actions.is_empty() {
             for tile in actions {
@@ -392,6 +404,11 @@ impl MapPanel {
         }
         for request in requests {
             self.request(request, res.maps, map_id);
+        }
+        if !self.editor.editing {
+            // Back in the viewer: it draws with its own options again.
+            self.view.left_drag_pans = true;
+            self.view.cut = Default::default();
         }
         let (cx, cy) = self.view.center_tile();
         let (w, h) = (
